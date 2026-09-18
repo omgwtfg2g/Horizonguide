@@ -1,7 +1,7 @@
 addon.name = 'horizonguide';
 addon.author = 'valzar';
-addon.version = '0.4.8';
-addon.desc = 'Offline Horizon wiki browser with manual guide tracking.';
+addon.version = '0.4.10';
+addon.desc = 'Offline HorizonXI quest, mission, job and profession guide with manual tracking.';
 require('common');
 local imgui = require('imgui');
 local bit = require('bit');
@@ -1567,7 +1567,7 @@ local function render_main_window(p, character)
         imgui.SetNextWindowSize({ 1000, 680 }, ImGuiCond_FirstUseEver);
     end
     imgui.SetNextWindowSizeConstraints({ 760, 460 }, { 10000, 10000 });
-    if imgui.Begin('HorizonGuide 0.4.1 - Wiki browser', visible) then
+    if imgui.Begin('HorizonGuide ' .. addon.version .. ' · by Valzar', visible) then
         render_top_toolbar(p);
         render_browser_sidebar(p, character);
         render_details_panel(p);
