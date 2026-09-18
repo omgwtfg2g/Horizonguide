@@ -1,0 +1,268 @@
+name: Export HorizonGuide profession data
+
+on:
+  push:
+    branches:
+      - chatgpt-profession-data-import
+    paths:
+      - ".github/workflows/export-profession-data.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout HorizonGuide
+        uses: actions/checkout@v4
+
+      - name: Generate skill range data
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/Lydya-nick77/craftstats.git /tmp/craftstats
+          python -m pip install --quiet requests beautifulsoup4 lxml
+          cat > /tmp/build_skillranges.py <<'PY'
+          import json, re, subprocess
+          from pathlib import Path
+          from urllib.parse import quote
+          import requests
+          from bs4 import BeautifulSoup
+
+          CRAFT_REPO = Path('/tmp/craftstats')
+          OUT = Path('profession-export')
+          OUT.mkdir(exist_ok=True)
+
+          professions = {
+              'Alchemy': 'alchemy.lua',
+              'Bonecraft': 'bonecraft.lua',
+              'Clothcraft': 'clothcraft.lua',
+              'Cooking': 'cooking.lua',
+              'Goldsmithing': 'goldsmith.lua',
+              'Leathercraft': 'leathercraft.lua',
+              'Smithing': 'smithing.lua',
+              'Woodworking': 'woodworking.lua',
+          }
+
+          ranks = [
+              ('0-10', 'Amateur', 1, 10),
+              ('11-20', 'Recruit', 11, 20),
+              ('21-30', 'Initiate', 21, 30),
+              ('31-40', 'Novice', 31, 40),
+              ('41-50', 'Apprentice', 41, 50),
+              ('51-60', 'Journeyman', 51, 60),
+              ('61-70', 'Craftsman', 61, 70),
+              ('71-80', 'Artisan', 71, 80),
+              ('81-90', 'Adept', 81, 90),
+              ('91-100', 'Veteran', 91, 100),
+          ]
+
+          def lua_unescape(s):
+              return (s or '').replace("\\'", "'").replace('\\\\', '\\')
+
+          def quoted_list(s):
+              return [lua_unescape(x) for x in re.findall(r"'((?:\\.|[^'])*)'", s or '')]
+
+          def parse_lua_recipes(text):
+              out = []
+              start_re = re.compile(r"\['((?:\\.|[^'])+)'\]\s*=\s*\{")
+              for m in start_re.finditer(text):
+                  i = m.end()
+                  depth = 1
+                  quote_ch = None
+                  escaped = False
+                  while i < len(text) and depth:
+                      ch = text[i]
+                      if quote_ch:
+                          if escaped:
+                              escaped = False
+                          elif ch == '\\':
+                              escaped = True
+                          elif ch == quote_ch:
+                              quote_ch = None
+                      else:
+                          if ch in ("'", '"'):
+                              quote_ch = ch
+                          elif ch == '{':
+                              depth += 1
+                          elif ch == '}':
+                              depth -= 1
+                      i += 1
+                  block = text[m.end():i-1]
+
+                  def scalar(pattern):
+                      mm = re.search(pattern, block)
+                      return lua_unescape(mm.group(1)) if mm else ''
+
+                  name = scalar(r"\bname\s*=\s*'((?:\\.|[^'])*)'")
+                  lm = re.search(r"\blevel\s*=\s*(\d+)", block)
+                  level = int(lm.group(1)) if lm else None
+                  crystal = scalar(r"\bcrystal\s*=\s*'((?:\\.|[^'])*)'")
+                  if not name or not level or not crystal or not (1 <= level <= 100):
+                      continue
+
+                  ing_m = re.search(r"\bingredients\s*=\s*\{([\s\S]*?)\}", block)
+                  sub_m = re.search(r"\bsubcraft\s*=\s*\{([\s\S]*?)\}", block)
+                  ingredients = quoted_list(ing_m.group(1) if ing_m else '')
+                  subcraft = quoted_list(sub_m.group(1) if sub_m else '')
+                  keyitem = scalar(r"\bkeyitem\s*=\s*'((?:\\.|[^'])*)'")
+                  hqs = []
+                  for n in (1, 2, 3):
+                      v = scalar(rf"\bhq{n}\s*=\s*'((?:\\.|[^'])*)'")
+                      if v:
+                          hqs.append(f'HQ{n}: {v}')
+                  out.append({
+                      'cap': str(level),
+                      'name': name,
+                      'crystal': crystal,
+                      'ingredients': '; '.join(ingredients),
+                      'extra': '; '.join(
+                          ([('Subcraft: ' + ', '.join(subcraft))] if subcraft else []) +
+                          ([('Key item: ' + keyitem)] if keyitem else [])
+                      ),
+                      'hq': '; '.join(hqs),
+                  })
+              out.sort(key=lambda x: (int(x['cap']), x['name'].lower(), x['ingredients'].lower()))
+              return out
+
+          def clean_cell(td):
+              vals = []
+              for s in td.stripped_strings:
+                  t = re.sub(r'\s+', ' ', s).strip()
+                  if not t or t.lower() in {'edit'}:
+                      continue
+                  vals.append(t)
+              # preserve order while removing duplicate adjacent strings
+              out = []
+              for v in vals:
+                  if not out or out[-1] != v:
+                      out.append(v)
+              return '; '.join(out)
+
+          def fishing_rank(rank_name):
+              url = f"https://horizonffxi.wiki/Category:Fishing/{rank_name}"
+              r = requests.get(url, timeout=30, headers={'User-Agent':'HorizonGuide-data-export/1.0'})
+              r.raise_for_status()
+              soup = BeautifulSoup(r.text, 'lxml')
+              table = None
+              for candidate in soup.find_all('table'):
+                  heads = [re.sub(r'\s+', ' ', th.get_text(' ', strip=True)).lower() for th in candidate.find_all('th')]
+                  joined = ' | '.join(heads)
+                  if 'location' in joined and 'bait' in joined and 'rod' in joined:
+                      table = candidate
+                      break
+              if table is None:
+                  raise RuntimeError(f'Fishing table not found: {url}')
+
+              rows = []
+              for tr in table.find_all('tr'):
+                  tds = tr.find_all('td')
+                  if len(tds) < 4:
+                      continue
+                  first = clean_cell(tds[0])
+                  # Prefer first linked title as name; otherwise trim '(level)'.
+                  link = tds[0].find('a')
+                  name = link.get_text(' ', strip=True) if link else re.sub(r'\s*\(\d+\).*$', '', first).strip()
+                  lm = re.search(r'\((\d+)\)', first)
+                  if not lm:
+                      lm = re.search(r'\b(\d{1,3})\b', first)
+                  if not name or not lm:
+                      continue
+                  rows.append({
+                      'level': lm.group(1),
+                      'name': name,
+                      'location': clean_cell(tds[1]),
+                      'bait': clean_cell(tds[2]),
+                      'rods': clean_cell(tds[3]),
+                      'notes': '',
+                  })
+              rows.sort(key=lambda x: (int(x['level']), x['name'].lower()))
+              return url, rows
+
+          def lua_string(s):
+              s = '' if s is None else str(s)
+              return '"' + s.replace('\\', '\\\\').replace('"', '\\"').replace('\r','').replace('\n','\\n') + '"'
+
+          data = {}
+          report = {
+              'craftstats_commit': subprocess.check_output(['git','-C',str(CRAFT_REPO),'rev-parse','HEAD'], text=True).strip(),
+              'crafts': {},
+              'fishing': {},
+              'errors': [],
+          }
+
+          for prof, filename in professions.items():
+              rows = parse_lua_recipes((CRAFT_REPO / 'recipes' / filename).read_text(encoding='utf-8'))
+              data[prof] = {}
+              report['crafts'][prof] = {}
+              for label, rank, lo, hi in ranks:
+                  selected = [x for x in rows if lo <= int(x['cap']) <= hi]
+                  source = f"https://horizonffxi.wiki/Category:{quote(prof, safe='')}/{rank}"
+                  data[prof][label] = {'kind':'recipe','source':source,'entries':selected}
+                  report['crafts'][prof][label] = len(selected)
+
+          data['Fishing'] = {}
+          for label, rank, lo, hi in ranks:
+              try:
+                  source, rows = fishing_rank(rank)
+                  rows = [x for x in rows if lo <= int(x['level']) <= hi]
+                  data['Fishing'][label] = {'kind':'fish','source':source,'entries':rows}
+                  report['fishing'][label] = len(rows)
+              except Exception as exc:
+                  report['errors'].append(f'Fishing {rank}: {exc}')
+                  data['Fishing'][label] = {
+                      'kind':'fish',
+                      'source':f'https://horizonffxi.wiki/Category:Fishing/{rank}',
+                      'entries':[]
+                  }
+                  report['fishing'][label] = 0
+
+          # Lua module
+          lines = [
+              '-- HorizonGuide profession skill-range database.',
+              '-- Generated from the HorizonXI-tested CraftStats recipe dataset and HorizonXI Wiki fishing rank tables.',
+              '-- Covers skill caps 1-100 only.',
+              'local data = {',
+          ]
+          ordered = ['Alchemy','Bonecraft','Clothcraft','Cooking','Fishing','Goldsmithing','Leathercraft','Smithing','Woodworking']
+          for prof in ordered:
+              lines.append(f'  [{lua_string(prof)}] = {{')
+              for label, rank, lo, hi in ranks:
+                  row = data[prof][label]
+                  lines.append(f'    [{lua_string(label)}] = {{')
+                  lines.append(f'      kind = {lua_string(row["kind"])},')
+                  lines.append(f'      source = {lua_string(row["source"])},')
+                  lines.append('      entries = {')
+                  for e in row['entries']:
+                      if row['kind'] == 'recipe':
+                          lines.append('        {' +
+                              f' cap={lua_string(e["cap"])}, name={lua_string(e["name"])}, crystal={lua_string(e["crystal"])},' +
+                              f' ingredients={lua_string(e["ingredients"])}, extra={lua_string(e["extra"])}, hq={lua_string(e["hq"])}' +
+                              ' },')
+                      else:
+                          lines.append('        {' +
+                              f' level={lua_string(e["level"])}, name={lua_string(e["name"])}, location={lua_string(e["location"])},' +
+                              f' bait={lua_string(e["bait"])}, rods={lua_string(e["rods"])}, notes={lua_string(e["notes"])}' +
+                              ' },')
+                  lines.append('      },')
+                  lines.append('    },')
+              lines.append('  },')
+          lines.append('}')
+          lines.append('return data')
+          (OUT / 'skillranges.lua').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          (OUT / 'profession-import-report.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+
+          if report['errors']:
+              print('WARNINGS:')
+              print('\n'.join(report['errors']))
+          print(json.dumps(report, indent=2))
+          PY
+          python /tmp/build_skillranges.py
+
+      - name: Upload profession data
+        uses: actions/upload-artifact@v4
+        with:
+          name: horizon-profession-data
+          path: profession-export/
+          retention-days: 1
