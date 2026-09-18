@@ -51,7 +51,7 @@ MAJOR CHANGES SINCE v0.2.8
 - Updated ToAU job quest/AF/limit-break coverage for Blue Mage, Corsair and Puppetmaster.
 - Preserved manual per-character progress and saved-profile compatibility.
 - Fixed Ashita/Lua 5.1 renderer upvalue limits and several UI/import regressions.
-- v0.4.9 adds a complete cumulative changelog/developer handoff and fixes the main window title so it always displays addon.version instead of a stale hard-coded version.
+- v0.4.8 adds a complete cumulative changelog/developer handoff and fixes the main window title so it always displays addon.version instead of a stale hard-coded version.
 
 IMPORTANT LIMITS
 - Quest completion and eligibility are not read from game state; tracking is manual.
