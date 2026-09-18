@@ -15,9 +15,7 @@ Players can manually mark quests completed and hide those entries. The addon cur
 This is a work in progress submitted for review. I am continuing to fix bugs, improve the interface, and update the guide content. Imported walkthroughs may need corrections, and not every quest’s availability on HorizonXI has been verified.
 
 
-##Updated 9/18/2026
-
-HorizonGuide v0.4.9 - Developer Review / Cumulative Update
+##HorizonGuide - Developer Review / Cumulative Update
 Created by valzar
 Updated: 2026-09-18
 
@@ -62,22 +60,5 @@ IMPORTANT LIMITS
 - Retail-only guide content is intentionally not imported as Horizon guidance; questionable or out-of-era sections are warned where known.
 - Profession recipe data excludes known later-expansion/above-100 requirements and desynthesis content where documented by the import audit.
 
-DEVELOPER / REVIEW FILES
-- CHANGELOG_SINCE_v0.2.8.txt: detailed version-by-version history.
-- DEVELOPER_REVIEW_v0.4.9.txt: architecture, data sources, persistence and review notes.
-- RELEASE_NOTES_v0.4.9.txt: the small v0.4.9 packaging/metadata update.
-- JOB_GUIDE_AUDIT_2026-09-18.txt: job-guide audit/update details.
-- WIKI_AUDIT_2026-09-18.txt: quest/mission/guide wiki revision audit.
-- QUEST_MISSION_AUDIT_2026-09-18.txt: walkthrough-vs-supplemental structure audit.
-- source/: cached wiki source and structured profession import data.
-- tools/: profession import/rebuild helpers.
-- tests/: offline data/UI validation helpers (requires Python dependencies listed below).
-
 SOURCE / REBUILD
 HorizonXI Wiki: https://horizonffxi.wiki/
-Primary wiki snapshot used by the quest/mission audit: HorizonXI+Wiki-20260918032239.xml
-
-Python dependencies used by the profession tooling/tests include:
-- beautifulsoup4
-- mwparserfromhell
-- lupa (for Lua-backed tests)
